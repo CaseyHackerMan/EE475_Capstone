@@ -22,7 +22,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <math.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,6 +51,7 @@ SPI_HandleTypeDef hspi1;
 TIM_HandleTypeDef htim1;
 
 UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
 
@@ -63,6 +65,7 @@ static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_USART3_UART_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -108,10 +111,15 @@ int main(void)
   MX_USB_HOST_Init();
   MX_USART2_UART_Init();
   MX_TIM1_Init();
+  MX_USART3_UART_Init();
+
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
-  int i = 0;
+  uint8_t UART3_Rx_buf[1000];
+  uint8_t UART2_Tx_buf[1000];
+  // memset(UART3_Rx_buf, 0, 1000);
+  // strncpy((char*) UART3_Rx_buf, "Bruh", 5);
+  // HAL_UART_Receive_IT(&huart3, UART3_Rx_buf, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -122,13 +130,31 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-    // HAL_UART_Transmit(&huart2, (uint8_t*) "Hello", 5, 1);
-    int p = 1500 + 500*sin(i/100.0);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, p);
+    //HAL_UART_Receive_DMA(huart, pData, Size)
+    //HAL_UART_Receive(&huart3, UART3_Rx_buf, 1000, 500);
+    int i = receive_GPS(UART3_Rx_buf);
+    if (i) {
+    	UART3_Rx_buf[i++] = '\r';
+    	UART3_Rx_buf[i++] = '\n';
+    	HAL_UART_Transmit(&huart2, UART3_Rx_buf, i, 100);
+    }
+
+    // int p = 1500 + 500*sin(i/100.0);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
     HAL_Delay(10);
-    i++;
   }
   /* USER CODE END 3 */
+}
+
+int receive_GPS(uint8_t* rxBuf) {
+	int i = 0;
+	uint8_t c = 0;
+	while (i < 1000) {
+		if (HAL_UART_Receive(&huart3, &c, 1, 5) == HAL_OK) {
+			rxBuf[i++] = c;
+	    } else break;
+	}
+	return i;
 }
 
 /**
@@ -373,7 +399,7 @@ static void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 9600;
+  huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
@@ -387,6 +413,39 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 9600;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
 
 }
 
