@@ -24,11 +24,12 @@
 /* USER CODE BEGIN Includes */
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+void format_data(float Time, float Lat, float Long);
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -54,9 +55,16 @@ UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-uint8_t UART3_Rx_c = 0;
-int UART3_Rx_i = 0;
-uint8_t UART3_Rx_buf[100];
+char Data_Buffer[750];
+char GPS_Payload[100];
+uint8_t Rx_Data_Ready_Flag = 0;
+static int Msg_Index;
+char *GPS_Data_Ptr;
+
+float Time, Latitude, Longitude;
+int Hours, Min, Sec;
+
+uint8_t UART3_Rx_buf[1000];
 uint8_t UART2_Tx_buf[100];
 /* USER CODE END PV */
 
@@ -77,16 +85,43 @@ void MX_USB_HOST_Process(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-	UART3_Rx_buf[UART3_Rx_i++] = UART3_Rx_c;
-	if (UART3_Rx_c == '\n') {
-		if (UART3_Rx_i >= 50 && strncmp((char*) UART3_Rx_buf, "$GPGGA", 6) == 0) {
-			HAL_UART_Transmit(&huart2, UART3_Rx_buf, UART3_Rx_i, 100);
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	Rx_Data_Ready_Flag = 1;
+}
+
+void get_location() {
+	if(Rx_Data_Ready_Flag == 1) {
+		Msg_Index = 0;
+		strcpy(Data_Buffer, (char*)(UART3_Rx_buf));
+		GPS_Data_Ptr = strstr(Data_Buffer, "GPRMC");
+
+		if(*GPS_Data_Ptr == 'G') {
+			while(1) {
+				GPS_Payload[Msg_Index] = *GPS_Data_Ptr;
+				Msg_Index++;
+				*GPS_Data_Ptr = *(GPS_Data_Ptr + Msg_Index);
+
+				if(*GPS_Data_Ptr == '\n') {
+					GPS_Payload[Msg_Index] = '\0';
+					break;
+				}
+			}
+			sscanf(GPS_Payload, "GPRMC, %f, A, %f, N, %f,", &Time, &Latitude, &Longitude);
+			format_data(Time, Latitude, Longitude);
+			HAL_Delay(1);
+			Rx_Data_Ready_Flag = 0;
 		}
-		UART3_Rx_i = 0;
 	}
-	HAL_UART_Receive_IT(&huart3, &UART3_Rx_c, 1);
+}
+
+void format_data(float Time, float Lat, float Long) {
+	char Data[100];
+	Hours = (int)Time / 10000;
+	Min = (int)(Time - (Hours * 10000)) / 100;
+	Sec = (int)(Time - ((Hours * 10000) + (Min * 100)));
+	sprintf(Data, "\r\nTime=%d:%d:%d Latitude=%f, Longitude=%f", Hours+3, Min, Sec, Lat, Long);
+	HAL_UART_Transmit(&huart2, (uint8_t*)Data, strlen(Data), HAL_MAX_DELAY);
+	HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n\n", 3, HAL_MAX_DELAY);
 }
 /* USER CODE END 0 */
 
@@ -126,7 +161,7 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_UART_Receive_IT(&huart3, &UART3_Rx_c, 1);
+  HAL_UART_Receive_DMA(&huart3, UART3_Rx_buf, 700);
   HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, 100);
   /* USER CODE END 2 */
 
@@ -139,6 +174,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     // int p = 1500 + 500*sin(i/100.0);
+
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
     HAL_Delay(10);
   }

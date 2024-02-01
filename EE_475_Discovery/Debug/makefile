@@ -65,7 +65,7 @@ main-build: EE_475_Discovery.elf secondary-outputs
 
 # Tool invocations
 EE_475_Discovery.elf EE_475_Discovery.map: $(OBJS) $(USER_OBJS) C:\Users\casey\Desktop\Class\ Stuff\EE\ 475\EE475_Capstone\EE_475_Discovery\STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "EE_475_Discovery.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\casey\Desktop\Class Stuff\EE 475\EE475_Capstone\EE_475_Discovery\STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="EE_475_Discovery.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+	arm-none-eabi-gcc -o "EE_475_Discovery.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\casey\Desktop\Class Stuff\EE 475\EE475_Capstone\EE_475_Discovery\STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="EE_475_Discovery.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -u _scanf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
