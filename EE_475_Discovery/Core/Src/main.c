@@ -54,7 +54,10 @@ UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-
+uint8_t UART3_Rx_c = 0;
+int UART3_Rx_i = 0;
+uint8_t UART3_Rx_buf[100];
+uint8_t UART2_Tx_buf[100];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,7 +77,17 @@ void MX_USB_HOST_Process(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	UART3_Rx_buf[UART3_Rx_i++] = UART3_Rx_c;
+	if (UART3_Rx_c == '\n') {
+		if (UART3_Rx_i >= 50 && strncmp((char*) UART3_Rx_buf, "$GPGGA", 6) == 0) {
+			HAL_UART_Transmit(&huart2, UART3_Rx_buf, UART3_Rx_i, 100);
+		}
+		UART3_Rx_i = 0;
+	}
+	HAL_UART_Receive_IT(&huart3, &UART3_Rx_c, 1);
+}
 /* USER CODE END 0 */
 
 /**
@@ -88,7 +101,6 @@ int main(void)
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
-
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
@@ -112,14 +124,10 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM1_Init();
   MX_USART3_UART_Init();
-
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  uint8_t UART3_Rx_buf[1000];
-  uint8_t UART2_Tx_buf[1000];
-  // memset(UART3_Rx_buf, 0, 1000);
-  // strncpy((char*) UART3_Rx_buf, "Bruh", 5);
-  // HAL_UART_Receive_IT(&huart3, UART3_Rx_buf, 1);
+  HAL_UART_Receive_IT(&huart3, &UART3_Rx_c, 1);
+  HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, 100);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -130,31 +138,11 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-    //HAL_UART_Receive_DMA(huart, pData, Size)
-    //HAL_UART_Receive(&huart3, UART3_Rx_buf, 1000, 500);
-    int i = receive_GPS(UART3_Rx_buf);
-    if (i) {
-    	UART3_Rx_buf[i++] = '\r';
-    	UART3_Rx_buf[i++] = '\n';
-    	HAL_UART_Transmit(&huart2, UART3_Rx_buf, i, 100);
-    }
-
     // int p = 1500 + 500*sin(i/100.0);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
     HAL_Delay(10);
   }
   /* USER CODE END 3 */
-}
-
-int receive_GPS(uint8_t* rxBuf) {
-	int i = 0;
-	uint8_t c = 0;
-	while (i < 1000) {
-		if (HAL_UART_Receive(&huart3, &c, 1, 5) == HAL_OK) {
-			rxBuf[i++] = c;
-	    } else break;
-	}
-	return i;
 }
 
 /**
