@@ -35,6 +35,10 @@ void format_data(float Time, float Lat, float Long);
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define GPS_BUF_N 400
+#define BNO055_ADDRESS 0x28
+#define BNO055_MODE_COMPASS 0x09
+#define BNO055_ADDR_OPRMODE 0x3D
+#define BNO055_ADDR_HEADING 0x1A
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -61,6 +65,7 @@ uint8_t Rx_Data_Ready_Flag = 0;
 char *GPS_Data_Ptr;
 
 float Time, Latitude, Longitude;
+float Heading;
 int Hours, Min, Sec;
 
 uint8_t UART3_Rx_buf[GPS_BUF_N];
@@ -105,12 +110,17 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 }
 
 void format_data(float Time, float Lat, float Long) {
-	char Data[100];
 	Hours = (int)Time / 10000;
 	Min = (int)(Time - (Hours * 10000)) / 100;
 	Sec = (int)(Time - ((Hours * 10000) + (Min * 100)));
-	sprintf(Data, "Time=%d:%d:%d Latitude=%f, Longitude=%f\r\n", Hours+4, Min, Sec, Lat, Long);
-	HAL_UART_Transmit(&huart2, (uint8_t*)Data, strlen(Data), HAL_MAX_DELAY);
+	sprintf((char*) UART2_Tx_buf, "Time=%d:%d:%d Latitude=%f, Longitude=%f\r\n", Hours+4, Min, Sec, Lat, Long);
+	HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen(UART2_Tx_buf), HAL_MAX_DELAY);
+}
+
+void read_heading() {
+	uint8_t data[2];
+	HAL_I2C_Mem_Read(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_HEADING, I2C_MEMADD_SIZE_8BIT, data, 2, HAL_MAX_DELAY);
+	Heading = (float)((int16_t)(data[1] << 8 | data[0])) / 16.0;
 }
 /* USER CODE END 0 */
 
@@ -151,10 +161,15 @@ int main(void)
   MX_TIM1_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  int i = 0;
   memset(UART3_Rx_buf, 0, GPS_BUF_N);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_UART_Receive_DMA(&huart3, UART3_Rx_buf, GPS_BUF_N);
-  HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, 100);
+  int mode = BNO055_MODE_COMPASS;
+  HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, HAL_MAX_DELAY);
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -166,10 +181,16 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-    format_data(Time, Latitude, Longitude);
+     if (i % 10 == 0) format_data(Time, Latitude, Longitude);
+     read_heading();
+     sprintf((char*) UART2_Tx_buf, "%f\r\n", Heading);
+     HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen(UART2_Tx_buf), HAL_MAX_DELAY);
+//    sprintf((char*) UART2_Tx_buf, "%f,N,%f,W\r\n", Latitude, Longitude);
+//    HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen(UART2_Tx_buf), HAL_MAX_DELAY);
     // int p = 1500 + 500*sin(i/100.0);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
-    HAL_Delay(1000);
+    HAL_Delay(100);
+    i++;
   }
   /* USER CODE END 3 */
 }
