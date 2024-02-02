@@ -30,6 +30,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 void format_data(float Time, float Lat, float Long);
+void printd();
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -60,7 +61,7 @@ UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart3_rx;
 
 /* USER CODE BEGIN PV */
-char Data_Buffer[GPS_BUF_N];
+char GPS_Buf[GPS_BUF_N];
 uint8_t Rx_Data_Ready_Flag = 0;
 char *GPS_Data_Ptr;
 
@@ -93,9 +94,9 @@ void MX_USB_HOST_Process(void);
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart == &huart3) {
-		memcpy(Data_Buffer, UART3_Rx_buf, GPS_BUF_N);
-		Data_Buffer[GPS_BUF_N-1] = '\0';
-		char* Data_Buffer_ptr = strstr((char*) Data_Buffer, "GPGGA");
+		memcpy(GPS_Buf, UART3_Rx_buf, GPS_BUF_N);
+		GPS_Buf[GPS_BUF_N-1] = '\0';
+		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPGGA", 5);
 		if (Data_Buffer_ptr == 0) return;
 
 		// HAL_UART_Transmit(&huart2, Data_Buffer_ptr, strlen(Data_Buffer_ptr), HAL_MAX_DELAY);
@@ -114,13 +115,24 @@ void format_data(float Time, float Lat, float Long) {
 	Min = (int)(Time - (Hours * 10000)) / 100;
 	Sec = (int)(Time - ((Hours * 10000) + (Min * 100)));
 	sprintf((char*) UART2_Tx_buf, "Time=%d:%d:%d Latitude=%f, Longitude=%f\r\n", Hours+4, Min, Sec, Lat, Long);
-	HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen(UART2_Tx_buf), HAL_MAX_DELAY);
+	printd();
 }
 
 void read_heading() {
 	uint8_t data[2];
 	HAL_I2C_Mem_Read(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_HEADING, I2C_MEMADD_SIZE_8BIT, data, 2, HAL_MAX_DELAY);
 	Heading = (float)((int16_t)(data[1] << 8 | data[0])) / 16.0;
+}
+
+void set_steering(float direction) {
+	int pulse = direction*500+1500;
+	if (pulse > 2000) pulse = 2000;
+	if (pulse < 1000) pulse = 1000;
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, pulse);
+}
+
+void printd() {
+	HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen((char*) UART2_Tx_buf), HAL_MAX_DELAY);
 }
 /* USER CODE END 0 */
 
@@ -165,11 +177,9 @@ int main(void)
   memset(UART3_Rx_buf, 0, GPS_BUF_N);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_UART_Receive_DMA(&huart3, UART3_Rx_buf, GPS_BUF_N);
-  int mode = BNO055_MODE_COMPASS;
+  uint8_t mode = BNO055_MODE_COMPASS;
   HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
   HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, HAL_MAX_DELAY);
-
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -181,15 +191,14 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-     if (i % 10 == 0) format_data(Time, Latitude, Longitude);
-     read_heading();
-     sprintf((char*) UART2_Tx_buf, "%f\r\n", Heading);
-     HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen(UART2_Tx_buf), HAL_MAX_DELAY);
-//    sprintf((char*) UART2_Tx_buf, "%f,N,%f,W\r\n", Latitude, Longitude);
-//    HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen(UART2_Tx_buf), HAL_MAX_DELAY);
-    // int p = 1500 + 500*sin(i/100.0);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1500);
-    HAL_Delay(100);
+    if (i % 100 == 0) format_data(Time, Latitude, Longitude);
+    read_heading();
+    sprintf((char*) UART2_Tx_buf, "%f\r\n", Heading);
+    printd();
+
+    float comp = (Heading > 180 ? Heading-360 : Heading)/180.0;
+    set_steering(comp*2);
+    HAL_Delay(10);
     i++;
   }
   /* USER CODE END 3 */
@@ -369,7 +378,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 168;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 10000;
+  htim1.Init.Period = 20000;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
