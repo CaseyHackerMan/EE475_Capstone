@@ -362,7 +362,6 @@ void format_data(float Time, float Lat, float Long) {
 	sprintf(Data, "\r\nTime=%d:%d:%d Latitude=%f, Longitude=%f", Hours+3, Min, Sec, Lat, Long);
 	HAL_UART_Transmit(&huart2, (uint8_t*)Data, strlen(Data), HAL_MAX_DELAY);
 	HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n\n", 3, HAL_MAX_DELAY);
-
 }
 
 

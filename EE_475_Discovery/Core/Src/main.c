@@ -35,7 +35,8 @@ void printd();
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define GPS_BUF_N 400
+#define LOOP_DELAY 10
+#define GPS_BUF_N 512
 #define BNO055_ADDRESS 0x28
 #define BNO055_MODE_COMPASS 0x09
 #define BNO055_ADDR_OPRMODE 0x3D
@@ -94,8 +95,9 @@ void MX_USB_HOST_Process(void);
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart == &huart3) {
-		memcpy(GPS_Buf, UART3_Rx_buf, GPS_BUF_N);
+		memcpy(GPS_Buf, UART3_Rx_buf+1, GPS_BUF_N-1);
 		GPS_Buf[GPS_BUF_N-1] = '\0';
+		// HAL_UART_Transmit(&huart2, GPS_Buf, strlen((char*) GPS_Buf), HAL_MAX_DELAY);
 		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPGGA", 5);
 		if (Data_Buffer_ptr == 0) return;
 
@@ -114,7 +116,8 @@ void format_data(float Time, float Lat, float Long) {
 	Hours = (int)Time / 10000;
 	Min = (int)(Time - (Hours * 10000)) / 100;
 	Sec = (int)(Time - ((Hours * 10000) + (Min * 100)));
-	sprintf((char*) UART2_Tx_buf, "Time=%d:%d:%d Latitude=%f, Longitude=%f\r\n", Hours+4, Min, Sec, Lat, Long);
+	sprintf((char*) UART2_Tx_buf, "Time=%d:%d:%d Latitude=%f, Longitude=%f\r\n",
+			Hours-8, Min, Sec, Lat, Long);
 	printd();
 }
 
@@ -174,6 +177,7 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   int i = 0;
+  float comp_f = 0;
   memset(UART3_Rx_buf, 0, GPS_BUF_N);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_UART_Receive_DMA(&huart3, UART3_Rx_buf, GPS_BUF_N);
@@ -191,14 +195,16 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-    if (i % 100 == 0) format_data(Time, Latitude, Longitude);
+    if (i % 10 == 0) format_data(Time, Latitude, Longitude);
     read_heading();
     sprintf((char*) UART2_Tx_buf, "%f\r\n", Heading);
     printd();
 
     float comp = (Heading > 180 ? Heading-360 : Heading)/180.0;
-    set_steering(comp*2);
-    HAL_Delay(10);
+    comp_f += (comp-comp_f)*.01;
+
+    set_steering(comp_f);
+    HAL_Delay(LOOP_DELAY);
     i++;
   }
   /* USER CODE END 3 */
