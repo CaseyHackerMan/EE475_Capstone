@@ -30,6 +30,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 void format_data(float Time, float Lat, float Long);
+int parse_GPS(char* start, char* end);
 void printd();
 /* USER CODE END PTD */
 
@@ -101,15 +102,42 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPGGA", 5);
 		if (Data_Buffer_ptr == 0) return;
 
+		parse_GPS(Data_Buffer_ptr, GPS_Buf+GPS_BUF_N);
+
 		// HAL_UART_Transmit(&huart2, Data_Buffer_ptr, strlen(Data_Buffer_ptr), HAL_MAX_DELAY);
-		float t, lat, lon;
-		int res = sscanf((char*) Data_Buffer_ptr, "GPGGA,%f,%f,N,%f,W", &t, &lat, &lon);
-		if (res == 3) {
-			Time = t;
-			Latitude = lat;
-			Longitude = lon;
-		}
+//		float t, lat, lon;
+//		int res = sscanf((char*) Data_Buffer_ptr, "GPGGA,%f,%f,N,%f,W", &t, &lat, &lon);
+//		if (res == 3) {
+//			Time = t;
+//			Latitude = lat;
+//			Longitude = lon;
+//		}
 	}
+}
+
+int parse_GPS(char* start, char* end) {
+	// GPGGA,035140.00,4739.22314,N,12218.23740,W,2,08,1.14,49.3,M,-18.8,M,,0000*55
+
+	char* ptr = start;
+
+	char* items[6];
+	int i = 0;
+
+	items[i++] = ptr;
+
+	while (ptr < end) {
+		if (*ptr == ',') {
+			*ptr = '/0';
+			if (i < 6) {
+				items[i++] = ptr+1;
+			} else break;
+		}
+		ptr++;
+	}
+
+	Time = atof(items[1]);
+
+	return 0;
 }
 
 void format_data(float Time, float Lat, float Long) {
