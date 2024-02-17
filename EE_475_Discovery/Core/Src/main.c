@@ -31,6 +31,8 @@
 /* USER CODE BEGIN PTD */
 void format_data(float Time, float Lat, float Long);
 int parse_GPS(char* start, char* end);
+void set_speed(float speed);
+void set_steering(float direction);
 void printd();
 /* USER CODE END PTD */
 
@@ -162,6 +164,13 @@ void set_steering(float direction) {
 	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, pulse);
 }
 
+void set_speed(float speed) {
+	int pulse = speed*200+1500;
+	if (pulse > 1700) pulse = 1700;
+	if (pulse < 1500) pulse = 1500;
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, pulse);
+}
+
 void printd() {
 	HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen((char*) UART2_Tx_buf), HAL_MAX_DELAY);
 }
@@ -208,10 +217,13 @@ int main(void)
   float comp_f = 0;
   memset(UART3_Rx_buf, 0, GPS_BUF_N);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   HAL_UART_Receive_DMA(&huart3, UART3_Rx_buf, GPS_BUF_N);
   uint8_t mode = BNO055_MODE_COMPASS;
   HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
   HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, HAL_MAX_DELAY);
+  set_speed(0);
+  HAL_Delay(2000);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -232,7 +244,12 @@ int main(void)
     comp_f += (comp-comp_f)*.01;
 
     set_steering(comp_f);
-    HAL_Delay(LOOP_DELAY);
+    set_speed(.6); // fast
+    HAL_Delay(1000);
+    set_speed(.5); // slow
+    HAL_Delay(2000);
+    set_speed(0); // off
+    HAL_Delay(3000);
     i++;
   }
   /* USER CODE END 3 */
@@ -443,6 +460,11 @@ static void MX_TIM1_Init(void)
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.Pulse = 0;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
