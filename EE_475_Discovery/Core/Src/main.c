@@ -25,20 +25,22 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-void format_data(float Time, float Lat, float Long);
-int parse_GPS(char* start, char* end);
+void format_data(double Time, double Lat, double Long);
+void parse_GPS(char* start, char* end);
 void set_speed(float speed);
 void set_steering(float direction);
 void printd();
+double format_NMEA(char* str);
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define LOOP_DELAY 500
+#define LOOP_DELAY 100
 #define GPS_BUF_N 512
 #define BNO055_ADDRESS 0x28
 #define BNO055_MODE_COMPASS 0x09
@@ -69,10 +71,10 @@ char GPS_Buf[GPS_BUF_N];
 uint8_t Rx_Data_Ready_Flag = 0;
 char *GPS_Data_Ptr;
 
-float Time, Latitude, Longitude;
-float Heading;
+double target_latitude = 47.65515649, target_longitude = 122.30073340;
+double time = 0, latitude = 0, longitude = 0;
+float heading = 0;
 float steer_Pk = 2;
-int Hours, Min, Sec;
 
 uint8_t UART3_Rx_buf[GPS_BUF_N];
 uint8_t UART2_Tx_buf[100];
@@ -99,72 +101,68 @@ void MX_USB_HOST_Process(void);
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart == &huart3) {
-		memcpy(GPS_Buf, UART3_Rx_buf+1, GPS_BUF_N-1);
-		GPS_Buf[GPS_BUF_N-1] = '\0';
+		memcpy(GPS_Buf, UART3_Rx_buf, GPS_BUF_N);
 
 		// DEBUG
-		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
-		HAL_UART_Transmit(&huart2, (uint8_t*) GPS_Buf, strlen((char*) GPS_Buf), HAL_MAX_DELAY);
-		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
+//		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
+//		HAL_UART_Transmit(&huart2, (uint8_t*) GPS_Buf, GPS_BUF_N, HAL_MAX_DELAY);
+//		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
 		// DEBUG
 
-		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPGGA", 5);
+		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPRMC", GPS_BUF_N);
 		if (Data_Buffer_ptr == 0) return;
 
 		parse_GPS(Data_Buffer_ptr, GPS_Buf+GPS_BUF_N);
-
-		// HAL_UART_Transmit(&huart2, Data_Buffer_ptr, strlen(Data_Buffer_ptr), HAL_MAX_DELAY);
-//		float t, lat, lon;
-//		int res = sscanf((char*) Data_Buffer_ptr, "GPGGA,%f,%f,N,%f,W", &t, &lat, &lon);
-//		if (res == 3) {
-//			Time = t;
-//			Latitude = lat;
-//			Longitude = lon;
-//		}
 	}
 }
 
-int parse_GPS(char* start, char* end) {
-	// GPGGA,035140.00,4739.22314,N,12218.23740,W,2,08,1.14,49.3,M,-18.8,M,,0000*55
-	// 0     1         2          3 4           5
+void parse_GPS(char* start, char* end) {
+	// GPRMC,011725.00,A,4739.21106,N,12218.32692,W,0.019,,190224,,,D*6A
+	// 0     1         2 3          4 5           6
 	int i = 0;
-	char* items[6];
+	char* items[7];
 	char* ptr = start;
 	items[i++] = ptr;
 
 	while (ptr < end) {
 		if (*ptr == ',') {
 			*ptr = '\0';
-			if (i < 6) items[i++] = ptr+1;
+			if (i < 7) items[i++] = ptr+1;
 			else break;
 		}
 		ptr++;
 	}
 
-	Time = atof(items[1]);
-	if (*items[3] == 'N') {
-		Latitude = atof(items[2]);
-	}
-	if (*items[5] == 'W') {
-		Longitude = atof(items[4]);
-	}
-
-	return 0;
+	if (*items[2] == 'A') time = atof(items[1]);
+	if (*items[4] == 'N') latitude = format_NMEA(items[3]);
+	else if (*items[4] == 'S') latitude = -format_NMEA(items[3]);
+	if (*items[6] == 'E') longitude = format_NMEA(items[5]);
+	else if (*items[6] == 'W') longitude = -format_NMEA(items[5]);
 }
 
-void format_data(float Time, float Lat, float Long) {
-	Hours = (int)Time / 10000;
-	Min = (int)(Time - (Hours * 10000)) / 100;
-	Sec = (int)(Time - ((Hours * 10000) + (Min * 100)));
+double format_NMEA(char* str) {
+	double val = atof(str);
+	int deg = val/100;
+	return (val - deg*100)/60 + deg;
+}
+
+void format_data(double Time, double Lat, double Long) {
+	int Hours = Time / 10000;
+	int Min = (int)(Time - (Hours * 10000)) / 100;
+	int Sec = (int)(Time - ((Hours * 10000) + (Min * 100)));
+
+	Hours -= 8;
+	if (Hours < 0) Hours += 24;
+
 	sprintf((char*) UART2_Tx_buf, "Time=%d:%d:%d Latitude=%f, Longitude=%f\r\n",
-			Hours-8, Min, Sec, Lat, Long);
+			Hours, Min, Sec, Lat, Long);
 	printd();
 }
 
 void read_heading() {
 	uint8_t data[2];
 	HAL_I2C_Mem_Read(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_HEADING, I2C_MEMADD_SIZE_8BIT, data, 2, HAL_MAX_DELAY);
-	Heading = (float)((int16_t)(data[1] << 8 | data[0])) / 16.0;
+	heading = (float)((int16_t)(data[1] << 8 | data[0])) / 16.0;
 }
 
 void set_steering(float direction) {
@@ -224,7 +222,6 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   int i = 0;
-  float comp_f = 0;
   memset(UART3_Rx_buf, 0, GPS_BUF_N);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -232,6 +229,7 @@ int main(void)
   uint8_t mode = BNO055_MODE_COMPASS;
   HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
   HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, HAL_MAX_DELAY);
+  set_steering(0);
   set_speed(0);
   HAL_Delay(2000);
   /* USER CODE END 2 */
@@ -240,23 +238,29 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
     /* USER CODE END WHILE */
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-    if (i % 10 == 0) format_data(Time, Latitude, Longitude);
     read_heading();
-    sprintf((char*) UART2_Tx_buf, "%f\r\n", Heading);
+    sprintf((char*) UART2_Tx_buf, "%f %f %f\r\n", latitude, longitude, heading);
     printd();
 
-    float comp = (Heading > 180 ? Heading-360 : Heading)/180.0;
-    // comp_f += (comp-comp_f)*.01;
-    set_steering(comp*steer_Pk);
+    if (latitude && longitude && heading) {
+    	double lat_err = target_latitude - latitude;
+    	double lon_err = target_longitude - longitude;
 
-    //set_speed(.6); // fast
-    //set_speed(.5); // slow
-    //set_speed(0); // off
+    	float target_heading = atan2(lon_err, lat_err);
+    	float heading_err = target_heading - heading;
+
+    	float comp = (heading_err > 180 ? heading_err-360 : heading_err)/180.0;
+    	set_steering(comp*steer_Pk);
+
+    	//set_speed(.6); // fast
+    	set_speed(.5); // slow
+    	//set_speed(0); // off
+    }
+
     HAL_Delay(LOOP_DELAY);
     i++;
   }
