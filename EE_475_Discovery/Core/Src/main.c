@@ -38,7 +38,7 @@ void printd();
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define LOOP_DELAY 10
+#define LOOP_DELAY 500
 #define GPS_BUF_N 512
 #define BNO055_ADDRESS 0x28
 #define BNO055_MODE_COMPASS 0x09
@@ -71,6 +71,7 @@ char *GPS_Data_Ptr;
 
 float Time, Latitude, Longitude;
 float Heading;
+float steer_Pk = 2;
 int Hours, Min, Sec;
 
 uint8_t UART3_Rx_buf[GPS_BUF_N];
@@ -100,7 +101,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart == &huart3) {
 		memcpy(GPS_Buf, UART3_Rx_buf+1, GPS_BUF_N-1);
 		GPS_Buf[GPS_BUF_N-1] = '\0';
-		// HAL_UART_Transmit(&huart2, GPS_Buf, strlen((char*) GPS_Buf), HAL_MAX_DELAY);
+
+		// DEBUG
+		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart2, (uint8_t*) GPS_Buf, strlen((char*) GPS_Buf), HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
+		// DEBUG
+
 		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPGGA", 5);
 		if (Data_Buffer_ptr == 0) return;
 
@@ -119,25 +126,28 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 
 int parse_GPS(char* start, char* end) {
 	// GPGGA,035140.00,4739.22314,N,12218.23740,W,2,08,1.14,49.3,M,-18.8,M,,0000*55
-
-	char* ptr = start;
-
-	char* items[6];
+	// 0     1         2          3 4           5
 	int i = 0;
-
+	char* items[6];
+	char* ptr = start;
 	items[i++] = ptr;
 
 	while (ptr < end) {
 		if (*ptr == ',') {
-			*ptr = '/0';
-			if (i < 6) {
-				items[i++] = ptr+1;
-			} else break;
+			*ptr = '\0';
+			if (i < 6) items[i++] = ptr+1;
+			else break;
 		}
 		ptr++;
 	}
 
 	Time = atof(items[1]);
+	if (*items[3] == 'N') {
+		Latitude = atof(items[2]);
+	}
+	if (*items[5] == 'W') {
+		Longitude = atof(items[4]);
+	}
 
 	return 0;
 }
@@ -241,15 +251,13 @@ int main(void)
     printd();
 
     float comp = (Heading > 180 ? Heading-360 : Heading)/180.0;
-    comp_f += (comp-comp_f)*.01;
+    // comp_f += (comp-comp_f)*.01;
+    set_steering(comp*steer_Pk);
 
-    set_steering(comp_f);
-    set_speed(.6); // fast
-    HAL_Delay(1000);
-    set_speed(.5); // slow
-    HAL_Delay(2000);
-    set_speed(0); // off
-    HAL_Delay(3000);
+    //set_speed(.6); // fast
+    //set_speed(.5); // slow
+    //set_speed(0); // off
+    HAL_Delay(LOOP_DELAY);
     i++;
   }
   /* USER CODE END 3 */
