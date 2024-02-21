@@ -36,6 +36,8 @@ void set_speed(float speed);
 void set_steering(float direction);
 void printd();
 double format_NMEA(char* str);
+float read_rel_heading();
+// float read_rel_heading_quat();
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -44,8 +46,10 @@ double format_NMEA(char* str);
 #define GPS_BUF_N 512
 #define BNO055_ADDRESS 0x28
 #define BNO055_MODE_COMPASS 0x09
+#define BNO055_MODE_IMU     0x08
 #define BNO055_ADDR_OPRMODE 0x3D
 #define BNO055_ADDR_HEADING 0x1A
+#define BNO055_ADDR_QUATERNION 0x20
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -73,8 +77,8 @@ char *GPS_Data_Ptr;
 
 double target_latitude = 47.65515649, target_longitude = 122.30073340;
 double time = 0, latitude = 0, longitude = 0;
-float heading = 0;
-float steer_Pk = 2;
+float abs_heading = 0, rel_heading = 0;
+float steer_Pk = 2.0;
 
 uint8_t UART3_Rx_buf[GPS_BUF_N];
 uint8_t UART2_Tx_buf[100];
@@ -104,9 +108,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		memcpy(GPS_Buf, UART3_Rx_buf, GPS_BUF_N);
 
 		// DEBUG
-//		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
-//		HAL_UART_Transmit(&huart2, (uint8_t*) GPS_Buf, GPS_BUF_N, HAL_MAX_DELAY);
-//		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart2, (uint8_t*) GPS_Buf, GPS_BUF_N, HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
 		// DEBUG
 
 		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPRMC", GPS_BUF_N);
@@ -120,14 +124,14 @@ void parse_GPS(char* start, char* end) {
 	// GPRMC,011725.00,A,4739.21106,N,12218.32692,W,0.019,,190224,,,D*6A
 	// 0     1         2 3          4 5           6
 	int i = 0;
-	char* items[7];
+	char* items[11];
 	char* ptr = start;
 	items[i++] = ptr;
 
 	while (ptr < end) {
 		if (*ptr == ',') {
 			*ptr = '\0';
-			if (i < 7) items[i++] = ptr+1;
+			if (i < 11) items[i++] = ptr+1;
 			else break;
 		}
 		ptr++;
@@ -138,6 +142,7 @@ void parse_GPS(char* start, char* end) {
 	else if (*items[4] == 'S') latitude = -format_NMEA(items[3]);
 	if (*items[6] == 'E') longitude = format_NMEA(items[5]);
 	else if (*items[6] == 'W') longitude = -format_NMEA(items[5]);
+	if (*items[8] != '\0') abs_heading = atof(items[8]);
 }
 
 double format_NMEA(char* str) {
@@ -159,11 +164,24 @@ void format_data(double Time, double Lat, double Long) {
 	printd();
 }
 
-void read_heading() {
+float read_rel_heading() {
 	uint8_t data[2];
 	HAL_I2C_Mem_Read(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_HEADING, I2C_MEMADD_SIZE_8BIT, data, 2, HAL_MAX_DELAY);
-	heading = (float)((int16_t)(data[1] << 8 | data[0])) / 16.0;
+	return (float)((int16_t)(data[1] << 8 | data[0])) / 16.0;
 }
+
+//float read_rel_heading_quat() {
+//	uint8_t data[8];
+//	HAL_I2C_Mem_Read(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_QUATERNION, I2C_MEMADD_SIZE_8BIT, data, 8, HAL_MAX_DELAY);
+//	float qw = ((int16_t)(data[1] << 8 | data[0])) / 16.0;
+//	float qx = ((int16_t)(data[3] << 8 | data[2])) / 16.0;
+//	float qy = ((int16_t)(data[5] << 8 | data[4])) / 16.0;
+//	float qz = ((int16_t)(data[7] << 8 | data[6])) / 16.0;
+//
+//	double siny_cosp = 2 * (qw * qz + qx * qy);
+//	double cosy_cosp = 1 - 2 * (qy * qy + qz * qz);
+//	return atan2(siny_cosp, cosy_cosp)*180/3.14159265;
+//}
 
 void set_steering(float direction) {
 	int pulse = direction*500+1500;
@@ -222,11 +240,12 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   int i = 0;
+  char ready = 1; // wait for GPS fix
   memset(UART3_Rx_buf, 0, GPS_BUF_N);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   HAL_UART_Receive_DMA(&huart3, UART3_Rx_buf, GPS_BUF_N);
-  uint8_t mode = BNO055_MODE_COMPASS;
+  uint8_t mode = BNO055_MODE_IMU;
   HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
   HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, HAL_MAX_DELAY);
   set_steering(0);
@@ -242,23 +261,37 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-    read_heading();
-    sprintf((char*) UART2_Tx_buf, "%f %f %f\r\n", latitude, longitude, heading);
+    rel_heading = read_rel_heading();
+    sprintf((char*) UART2_Tx_buf, "%f %f %f\r\n", latitude, longitude, rel_heading);
     printd();
 
-    if (latitude && longitude && heading) {
+    if (latitude && longitude) ready = 1;
+    if (ready) {
     	double lat_err = target_latitude - latitude;
     	double lon_err = target_longitude - longitude;
 
-    	float target_heading = atan2(lon_err, lat_err);
-    	float heading_err = target_heading - heading;
+    	// check that we're at least ~5m away from the target
+    	if (lat_err*lat_err+lon_err*lon_err > 5e-5*5e-5) {
+    		// float target_abs_heading = atan2(lon_err, lat_err)*180/3.14159265;
+    		int time_ms = i*LOOP_DELAY;
+    		float target_abs_heading = ((time_ms/3000)%4)*90;
+    		if (time_ms > 12000) ready = 0;
 
-    	float comp = (heading_err > 180 ? heading_err-360 : heading_err)/180.0;
-    	set_steering(comp*steer_Pk);
 
-    	//set_speed(.6); // fast
-    	set_speed(.5); // slow
-    	//set_speed(0); // off
+    		int heading_err = target_abs_heading - rel_heading;
+    		if (heading_err < 0) heading_err += 360;
+
+    		set_steering(-((heading_err + 180)%360 - 180)/180.0*steer_Pk);
+
+    		sprintf((char*) UART2_Tx_buf, "%d\r\n", heading_err);
+    		printd();
+
+    		set_speed(.6); // fast
+    		//set_speed(.55); // slow
+    		//set_speed(0); // off
+    	}
+    } else {
+    	set_speed(0);
     }
 
     HAL_Delay(LOOP_DELAY);
