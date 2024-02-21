@@ -1,0 +1,17 @@
+main.c:100:6:HAL_UART_RxCpltCallback	3
+main.c:134:5:parse_GPS	4
+main.c:170:6:format_data	1
+main.c:179:6:read_heading	1
+main.c:185:6:set_steering	3
+main.c:192:6:printd	1
+main.c:201:5:main	1
+main.c:273:6:SystemClock_Config	3
+main.c:319:13:MX_I2C1_Init	2
+main.c:353:13:MX_I2S3_Init	2
+main.c:387:13:MX_SPI1_Init	2
+main.c:425:13:MX_TIM1_Init	7
+main.c:500:13:MX_USART2_UART_Init	2
+main.c:533:13:MX_USART3_UART_Init	2
+main.c:564:13:MX_DMA_Init	1
+main.c:585:13:MX_GPIO_Init	1
+main.c:684:6:Error_Handler	1
