@@ -37,6 +37,7 @@ void set_steering(float direction);
 void printd();
 double format_NMEA(char* str);
 float read_rel_heading();
+void parse_lora(uint8_t* buf, int count);
 // float read_rel_heading_quat();
 /* USER CODE END PTD */
 
@@ -111,9 +112,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		memcpy(GPS_Buf, UART3_Rx_buf, GPS_BUF_N);
 
 		// DEBUG
-		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
-		HAL_UART_Transmit(&huart2, (uint8_t*) GPS_Buf, GPS_BUF_N, HAL_MAX_DELAY);
-		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
+//		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
+//		HAL_UART_Transmit(&huart2, (uint8_t*) GPS_Buf, GPS_BUF_N, HAL_MAX_DELAY);
+//		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
 		// DEBUG
 
 		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPRMC", GPS_BUF_N);
@@ -121,9 +122,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 
 		parse_GPS(Data_Buffer_ptr, GPS_Buf+GPS_BUF_N);
 	} else if (huart == &huart5) {
-		UART5_Rx_buf[UART5_Rx_count++] = recvd_data;
+		UART5_Rx_buf[UART5_Rx_count++] = UART5_Rx_char;
 
-		if(recvd_data == '\r') {
+		if(UART5_Rx_char == '\r' || UART5_Rx_count >= 100) {
 			parse_lora(UART5_Rx_buf, UART5_Rx_count);
 			UART5_Rx_count = 0;
 		}
