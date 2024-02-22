@@ -60,12 +60,11 @@ float read_rel_heading();
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
-I2S_HandleTypeDef hi2s3;
-
 SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim1;
 
+UART_HandleTypeDef huart5;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart3_rx;
@@ -82,6 +81,10 @@ float steer_Pk = 2.0;
 
 uint8_t UART3_Rx_buf[GPS_BUF_N];
 uint8_t UART2_Tx_buf[100];
+
+uint8_t UART5_Rx_char;
+uint8_t UART5_Rx_buf[100];
+int UART5_Rx_count;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -89,11 +92,11 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
-static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_UART5_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -117,7 +120,20 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		if (Data_Buffer_ptr == 0) return;
 
 		parse_GPS(Data_Buffer_ptr, GPS_Buf+GPS_BUF_N);
+	} else if (huart == &huart5) {
+		UART5_Rx_buf[UART5_Rx_count++] = recvd_data;
+
+		if(recvd_data == '\r') {
+			parse_lora(UART5_Rx_buf, UART5_Rx_count);
+			UART5_Rx_count = 0;
+		}
+
+		HAL_UART_Receive_IT(&huart5, &UART5_Rx_char, 1);
 	}
+}
+
+void parse_lora(uint8_t* buf, int count) {
+	HAL_UART_Transmit(&huart2, buf, count, HAL_MAX_DELAY);
 }
 
 void parse_GPS(char* start, char* end) {
@@ -232,19 +248,20 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_I2C1_Init();
-  MX_I2S3_Init();
   MX_SPI1_Init();
   MX_USB_HOST_Init();
   MX_USART2_UART_Init();
   MX_TIM1_Init();
   MX_USART3_UART_Init();
+  MX_UART5_Init();
   /* USER CODE BEGIN 2 */
   int i = 0;
-  char ready = 1; // wait for GPS fix
+  char ready = 0; // wait for GPS fix
   memset(UART3_Rx_buf, 0, GPS_BUF_N);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   HAL_UART_Receive_DMA(&huart3, UART3_Rx_buf, GPS_BUF_N);
+  HAL_UART_Receive_IT(&huart5, UART5_Rx_buf, 1);
   uint8_t mode = BNO055_MODE_IMU;
   HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
   HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, HAL_MAX_DELAY);
@@ -262,8 +279,8 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     rel_heading = read_rel_heading();
-    sprintf((char*) UART2_Tx_buf, "%f %f %f\r\n", latitude, longitude, rel_heading);
-    printd();
+    // sprintf((char*) UART2_Tx_buf, "%f %f %f\r\n", latitude, longitude, rel_heading);
+    // printd();
 
     if (latitude && longitude) ready = 1;
     if (ready) {
@@ -376,40 +393,6 @@ static void MX_I2C1_Init(void)
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
-
-}
-
-/**
-  * @brief I2S3 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_I2S3_Init(void)
-{
-
-  /* USER CODE BEGIN I2S3_Init 0 */
-
-  /* USER CODE END I2S3_Init 0 */
-
-  /* USER CODE BEGIN I2S3_Init 1 */
-
-  /* USER CODE END I2S3_Init 1 */
-  hi2s3.Instance = SPI3;
-  hi2s3.Init.Mode = I2S_MODE_MASTER_TX;
-  hi2s3.Init.Standard = I2S_STANDARD_PHILIPS;
-  hi2s3.Init.DataFormat = I2S_DATAFORMAT_16B;
-  hi2s3.Init.MCLKOutput = I2S_MCLKOUTPUT_ENABLE;
-  hi2s3.Init.AudioFreq = I2S_AUDIOFREQ_96K;
-  hi2s3.Init.CPOL = I2S_CPOL_LOW;
-  hi2s3.Init.ClockSource = I2S_CLOCK_PLL;
-  hi2s3.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
-  if (HAL_I2S_Init(&hi2s3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN I2S3_Init 2 */
-
-  /* USER CODE END I2S3_Init 2 */
 
 }
 
@@ -528,6 +511,39 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 2 */
   HAL_TIM_MspPostInit(&htim1);
+
+}
+
+/**
+  * @brief UART5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_UART5_Init(void)
+{
+
+  /* USER CODE BEGIN UART5_Init 0 */
+
+  /* USER CODE END UART5_Init 0 */
+
+  /* USER CODE BEGIN UART5_Init 1 */
+
+  /* USER CODE END UART5_Init 1 */
+  huart5.Instance = UART5;
+  huart5.Init.BaudRate = 38400;
+  huart5.Init.WordLength = UART_WORDLENGTH_8B;
+  huart5.Init.StopBits = UART_STOPBITS_1;
+  huart5.Init.Parity = UART_PARITY_NONE;
+  huart5.Init.Mode = UART_MODE_TX_RX;
+  huart5.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart5.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN UART5_Init 2 */
+
+  /* USER CODE END UART5_Init 2 */
 
 }
 
@@ -670,6 +686,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PA4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /*Configure GPIO pin : BOOT1_Pin */
   GPIO_InitStruct.Pin = BOOT1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
@@ -692,6 +716,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PC7 PC10 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7|GPIO_PIN_10;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : OTG_FS_OverCurrent_Pin */
   GPIO_InitStruct.Pin = OTG_FS_OverCurrent_Pin;
