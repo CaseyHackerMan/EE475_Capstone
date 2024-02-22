@@ -31,11 +31,11 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 void format_data(double Time, double Lat, double Long);
-void parse_GPS(char* start, char* end);
+void parse_GPS(uint8_t* buf, int count);
 void set_speed(float speed);
 void set_steering(float direction);
 void printd();
-double format_NMEA(char* str);
+double format_NMEA(uint8_t* buf);
 float read_rel_heading();
 void parse_lora(uint8_t* buf, int count);
 // float read_rel_heading_quat();
@@ -44,7 +44,6 @@ void parse_lora(uint8_t* buf, int count);
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define LOOP_DELAY 100
-#define GPS_BUF_N 512
 #define BNO055_ADDRESS 0x28
 #define BNO055_MODE_COMPASS 0x09
 #define BNO055_MODE_IMU     0x08
@@ -71,21 +70,19 @@ UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart3_rx;
 
 /* USER CODE BEGIN PV */
-char GPS_Buf[GPS_BUF_N];
-uint8_t Rx_Data_Ready_Flag = 0;
-char *GPS_Data_Ptr;
 
 double target_latitude = 47.65515649, target_longitude = 122.30073340;
 double time = 0, latitude = 0, longitude = 0;
 float abs_heading = 0, rel_heading = 0;
 float steer_Pk = 2.0;
 
-uint8_t UART3_Rx_buf[GPS_BUF_N];
 uint8_t UART2_Tx_buf[100];
 
-uint8_t UART5_Rx_char;
+uint8_t UART3_Rx_buf[100];
+int UART3_Rx_count = 0;
+
 uint8_t UART5_Rx_buf[100];
-int UART5_Rx_count;
+int UART5_Rx_count = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -109,27 +106,25 @@ void MX_USB_HOST_Process(void);
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart == &huart3) {
-		memcpy(GPS_Buf, UART3_Rx_buf, GPS_BUF_N);
+		uint8_t c = UART3_Rx_buf[UART3_Rx_count++];
 
-		// DEBUG
-//		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
-//		HAL_UART_Transmit(&huart2, (uint8_t*) GPS_Buf, GPS_BUF_N, HAL_MAX_DELAY);
-//		HAL_UART_Transmit(&huart2, (uint8_t*) "\r\n", 2, HAL_MAX_DELAY);
-		// DEBUG
+		if(c == '\r' || UART3_Rx_count >= 100) {
+			HAL_UART_Transmit(&huart2, UART3_Rx_buf, UART3_Rx_count, HAL_MAX_DELAY);
+			parse_GPS(UART3_Rx_buf, UART3_Rx_count);
+			UART3_Rx_count = 0;
+		}
 
-		char* Data_Buffer_ptr = strnstr((char*) GPS_Buf, "GPRMC", GPS_BUF_N);
-		if (Data_Buffer_ptr == 0) return;
+		HAL_UART_Receive_IT(&huart3, UART3_Rx_buf + UART3_Rx_count, 1);
 
-		parse_GPS(Data_Buffer_ptr, GPS_Buf+GPS_BUF_N);
 	} else if (huart == &huart5) {
-		UART5_Rx_buf[UART5_Rx_count++] = UART5_Rx_char;
+		uint8_t c = UART5_Rx_buf[UART5_Rx_count++];
 
-		if(UART5_Rx_char == '\r' || UART5_Rx_count >= 100) {
+		if(c == '\r' || UART5_Rx_count >= 100) {
 			parse_lora(UART5_Rx_buf, UART5_Rx_count);
 			UART5_Rx_count = 0;
 		}
 
-		HAL_UART_Receive_IT(&huart5, &UART5_Rx_char, 1);
+		HAL_UART_Receive_IT(&huart5, UART5_Rx_buf + UART5_Rx_count, 1);
 	}
 }
 
@@ -137,15 +132,18 @@ void parse_lora(uint8_t* buf, int count) {
 	HAL_UART_Transmit(&huart2, buf, count, HAL_MAX_DELAY);
 }
 
-void parse_GPS(char* start, char* end) {
-	// GPRMC,011725.00,A,4739.21106,N,12218.32692,W,0.019,,190224,,,D*6A
-	// 0     1         2 3          4 5           6
+void parse_GPS(uint8_t* buf, int count) {
+	// $GPRMC,011725.00,A,4739.21106,N,12218.32692,W,0.019,,190224,,,D*6A
+	// 0      1         2 3          4 5           6
+
+	if (count <= 6 || strcmp((char*) buf, "$GPRMC")) return;
+
 	int i = 0;
-	char* items[11];
-	char* ptr = start;
+	uint8_t* items[11];
+	uint8_t* ptr = buf;
 	items[i++] = ptr;
 
-	while (ptr < end) {
+	while (ptr < buf+count) {
 		if (*ptr == ',') {
 			*ptr = '\0';
 			if (i < 11) items[i++] = ptr+1;
@@ -162,8 +160,8 @@ void parse_GPS(char* start, char* end) {
 	if (*items[8] != '\0') abs_heading = atof(items[8]);
 }
 
-double format_NMEA(char* str) {
-	double val = atof(str);
+double format_NMEA(uint8_t* buf) {
+	double val = atof(buf);
 	int deg = val/100;
 	return (val - deg*100)/60 + deg;
 }
@@ -258,10 +256,9 @@ int main(void)
   /* USER CODE BEGIN 2 */
   int i = 0;
   char ready = 0; // wait for GPS fix
-  memset(UART3_Rx_buf, 0, GPS_BUF_N);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  HAL_UART_Receive_DMA(&huart3, UART3_Rx_buf, GPS_BUF_N);
+  HAL_UART_Receive_IT(&huart3, UART3_Rx_buf, 1);
   HAL_UART_Receive_IT(&huart5, UART5_Rx_buf, 1);
   uint8_t mode = BNO055_MODE_IMU;
   HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
