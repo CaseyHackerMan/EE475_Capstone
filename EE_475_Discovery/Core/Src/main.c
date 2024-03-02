@@ -38,6 +38,8 @@ void printd();
 double format_NMEA(uint8_t* buf);
 float read_rel_heading();
 void parse_lora(uint8_t* buf, int count);
+double deg2rad(double deg);
+double haversine(double lat1, double lon1, double lat2, double lon2);
 // float read_rel_heading_quat();
 /* USER CODE END PTD */
 
@@ -103,6 +105,32 @@ void MX_USB_HOST_Process(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
+double deg2rad(double deg) {
+    return deg * M_PI / 180.0;
+}
+
+double haversine(double lat1, double lon1, double lat2, double lon2) {
+    double dlon, dlat, a, c, distance;
+
+    // Convert latitude and longitude from degrees to radians
+    lat1 = deg2rad(lat1);
+    lon1 = deg2rad(lon1);
+    lat2 = deg2rad(lat2);
+    lon2 = deg2rad(lon2);
+
+    // Haversine formula
+    dlon = lon2 - lon1;
+    dlat = lat2 - lat1;
+    a = pow(sin(dlat / 2), 2) + cos(lat1) * cos(lat2) * pow(sin(dlon / 2), 2);
+    c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    distance = RADIUS_EARTH_KM * c;
+
+    return distance;
+}
+
+
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart == &huart3) {
@@ -300,6 +328,7 @@ int main(void)
 
     		sprintf((char*) UART2_Tx_buf, "%d\r\n", heading_err);
     		printd();
+
 
     		set_speed(.6); // fast
     		//set_speed(.55); // slow
