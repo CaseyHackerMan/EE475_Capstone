@@ -119,14 +119,20 @@ double haversine(double lat1, double lon1, double lat2, double lon2) {
     lon1 = deg2rad(lon1);
     lat2 = deg2rad(lat2);
     lon2 = deg2rad(lon2);
-
-    // Haversine formula
     dlon = lon2 - lon1;
     dlat = lat2 - lat1;
+
+    // Calculate the bearing
+    double y = sin(dlon) * cos(lat2);
+    double x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon);
+    double bearing_rad = atan2(y, x);
+    double bearing_deg = bearing_rad * (180 / 3.1415926536);
+    double bearing = fmod(bearing_deg + 360, 360);
+
+    // Calculate distance
     a = pow(sin(dlat / 2), 2) + cos(lat1) * cos(lat2) * pow(sin(dlon / 2), 2);
     c = 2 * atan2(sqrt(a), sqrt(1 - a));
     distance = RADIUS_EARTH_KM * c;
-
     return distance;
 }
 
