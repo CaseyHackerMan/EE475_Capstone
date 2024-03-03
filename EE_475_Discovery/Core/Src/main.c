@@ -77,6 +77,8 @@ double target_latitude = 47.65515649, target_longitude = 122.30073340;
 double time = 0, latitude = 0, longitude = 0;
 float abs_heading = 0, rel_heading = 0;
 float steer_Pk = 2.0;
+double bearing = 0;
+double fountain_radius = 0.0658/2.0000;
 
 uint8_t UART2_Tx_buf[100];
 
@@ -122,12 +124,12 @@ double haversine(double lat1, double lon1, double lat2, double lon2) {
     dlon = lon2 - lon1;
     dlat = lat2 - lat1;
 
-    // Calculate the bearing
+    // Calculate the bearing(direction)
     double y = sin(dlon) * cos(lat2);
     double x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon);
     double bearing_rad = atan2(y, x);
     double bearing_deg = bearing_rad * (180 / 3.1415926536);
-    double bearing = fmod(bearing_deg + 360, 360);
+    bearing = fmod(bearing_deg + 360, 360);
 
     // Calculate distance
     a = pow(sin(dlat / 2), 2) + cos(lat1) * cos(lat2) * pow(sin(dlon / 2), 2);
@@ -289,6 +291,7 @@ int main(void)
   MX_UART5_Init();
   /* USER CODE BEGIN 2 */
   int i = 0;
+  double boundary = 0;
   char ready = 0; // wait for GPS fix
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -314,18 +317,31 @@ int main(void)
     // sprintf((char*) UART2_Tx_buf, "%f %f %f\r\n", latitude, longitude, rel_heading);
     // printd();
 
+
     if (latitude && longitude) ready = 1;
     if (ready) {
-    	double lat_err = target_latitude - latitude;
-    	double lon_err = target_longitude - longitude;
+    	boundary = haversine(latitude, longitude, target_latitude, target_longitude);
+    	//double lat_err = target_latitude - latitude;
+    	//double lon_err = target_longitude - longitude;
+
+    	// If we are outside the wanted radius
+    	if (boundary > fountain_radius){
+
+
+    	}
+    	// If we are inside the wanted radius
+    	else {
+
+    	}
+    }
 
     	// check that we're at least ~5m away from the target
-    	if (lat_err*lat_err+lon_err*lon_err > 5e-5*5e-5) {
+    	//if (lat_err*lat_err+lon_err*lon_err > 5e-5*5e-5) {
+    	/*
     		// float target_abs_heading = atan2(lon_err, lat_err)*180/3.14159265;
     		int time_ms = i*LOOP_DELAY;
     		float target_abs_heading = ((time_ms/3000)%4)*90;
     		if (time_ms > 12000) ready = 0;
-
 
     		int heading_err = target_abs_heading - rel_heading;
     		if (heading_err < 0) heading_err += 360;
@@ -342,7 +358,7 @@ int main(void)
     	}
     } else {
     	set_speed(0);
-    }
+    }*/
 
     HAL_Delay(LOOP_DELAY);
     i++;
