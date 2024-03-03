@@ -39,13 +39,14 @@ double format_NMEA(uint8_t* buf);
 float read_rel_heading();
 void parse_lora(uint8_t* buf, int count);
 double deg2rad(double deg);
-double haversine(double lat1, double lon1, double lat2, double lon2);
+double update_target(double lat, double lon, double tar_lat, double tar_lon);
 // float read_rel_heading_quat();
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define LOOP_DELAY 100
+#define FOUNTAIN_R 33.0;
 #define BNO055_ADDRESS 0x28
 #define BNO055_MODE_COMPASS 0x09
 #define BNO055_MODE_IMU     0x08
@@ -78,7 +79,9 @@ double time = 0, latitude = 0, longitude = 0;
 float abs_heading = 0, rel_heading = 0;
 float steer_Pk = 2.0;
 double bearing = 0;
-double fountain_radius = 0.0658/2.0000;
+
+double abs_target_heading = 0;
+double target_distance = 0;
 
 uint8_t UART2_Tx_buf[100];
 
@@ -113,29 +116,28 @@ double deg2rad(double deg) {
     return deg * M_PI / 180.0;
 }
 
-double haversine(double lat1, double lon1, double lat2, double lon2) {
+double update_target(double lat, double lon, double tar_lat, double tar_lon) {
     double dlon, dlat, a, c, distance;
 
     // Convert latitude and longitude from degrees to radians
-    lat1 = deg2rad(lat1);
-    lon1 = deg2rad(lon1);
-    lat2 = deg2rad(lat2);
-    lon2 = deg2rad(lon2);
-    dlon = lon2 - lon1;
-    dlat = lat2 - lat1;
+    lat = deg2rad(lat);
+    lon = deg2rad(lon);
+    tar_lat = deg2rad(tar_lat);
+    tar_lon = deg2rad(tar_lon);
+    dlon = tar_lon - lon;
+    dlat = tar_lat - lat;
 
     // Calculate the bearing(direction)
-    double y = sin(dlon) * cos(lat2);
-    double x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon);
-    double bearing_rad = atan2(y, x);
-    double bearing_deg = bearing_rad * (180 / 3.1415926536);
-    bearing = fmod(bearing_deg + 360, 360);
+    double y = sin(dlon) * cos(tar_lat);
+    double x = cos(lat) * sin(tar_lat) - sin(lat) * cos(lat) * cos(dlon);
+    double heading_rad = atan2(y, x);
+    double heading_deg = heading_rad * (180 / 3.1415926536);
+    abs_target_heading = fmod(heading_deg + 360, 360);
 
     // Calculate distance
-    a = pow(sin(dlat / 2), 2) + cos(lat1) * cos(lat2) * pow(sin(dlon / 2), 2);
+    a = pow(sin(dlat / 2), 2) + cos(lat) * cos(tar_lat) * pow(sin(dlon / 2), 2);
     c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    distance = RADIUS_EARTH_KM * c;
-    return distance;
+    target_distance = 6371000 * c;
 }
 
 
@@ -144,8 +146,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart == &huart3) {
 		uint8_t c = UART3_Rx_buf[UART3_Rx_count++];
 
-		if(c == '\r' || UART3_Rx_count >= 100) {
-			HAL_UART_Transmit(&huart2, UART3_Rx_buf, UART3_Rx_count, HAL_MAX_DELAY);
+		if(c == '\n' || UART3_Rx_count >= 100) {
 			parse_GPS(UART3_Rx_buf, UART3_Rx_count);
 			UART3_Rx_count = 0;
 		}
@@ -155,7 +156,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	} else if (huart == &huart5) {
 		uint8_t c = UART5_Rx_buf[UART5_Rx_count++];
 
-		if(c == '\r' || UART5_Rx_count >= 100) {
+		if(c == '\n' || UART5_Rx_count >= 100) {
 			parse_lora(UART5_Rx_buf, UART5_Rx_count);
 			UART5_Rx_count = 0;
 		}
@@ -173,6 +174,8 @@ void parse_GPS(uint8_t* buf, int count) {
 	// 0      1         2 3          4 5           6
 
 	if (count <= 6 || strcmp((char*) buf, "$GPRMC")) return;
+
+	HAL_UART_Transmit(&huart2, buf, count, HAL_MAX_DELAY);
 
 	int i = 0;
 	uint8_t* items[11];
@@ -194,6 +197,12 @@ void parse_GPS(uint8_t* buf, int count) {
 	if (*items[6] == 'E') longitude = format_NMEA(items[5]);
 	else if (*items[6] == 'W') longitude = -format_NMEA(items[5]);
 	if (*items[8] != '\0') abs_heading = atof(items[8]);
+
+	update_target(latitude, longitude, target_latitude, target_longitude);
+
+	sprintf((char*) UART2_Tx_buf, "T_Dist=%f, T_Head=%f, C_Head=%f\r\n",
+				target_distance, abs_target_heading, abs_heading);
+	printd();
 }
 
 double format_NMEA(uint8_t* buf) {
@@ -291,7 +300,6 @@ int main(void)
   MX_UART5_Init();
   /* USER CODE BEGIN 2 */
   int i = 0;
-  double boundary = 0;
   char ready = 0; // wait for GPS fix
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -318,21 +326,15 @@ int main(void)
     // printd();
 
 
+
+
     if (latitude && longitude) ready = 1;
     if (ready) {
-    	boundary = haversine(latitude, longitude, target_latitude, target_longitude);
-    	//double lat_err = target_latitude - latitude;
-    	//double lon_err = target_longitude - longitude;
+
 
     	// If we are outside the wanted radius
-    	if (boundary > fountain_radius){
+    	double dist_err = target_distance - FOUNTAIN_R;
 
-
-    	}
-    	// If we are inside the wanted radius
-    	else {
-
-    	}
     }
 
     	// check that we're at least ~5m away from the target
