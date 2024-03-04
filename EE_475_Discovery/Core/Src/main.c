@@ -30,15 +30,13 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-void printd();
-double deg2rad(double deg);
+double format_NMEA(char* buf);
 void format_data(double Time, double Lat, double Long);
 
 void update_target();
-float read_IMU_heading();
-double format_NMEA(uint8_t* buf);
-void parse_GPS(uint8_t* buf, int count);
-void parse_lora(uint8_t* buf, int count);
+void update_IMU_heading();
+void parse_GPS(char* buf, int count);
+void parse_lora(char* buf, int count);
 
 void set_speed(float speed);
 void set_steering(float direction);
@@ -56,6 +54,10 @@ void set_steering(float direction);
 #define BNO055_ADDR_OPRMODE 0x3D
 #define BNO055_ADDR_HEADING 0x1A
 #define BNO055_ADDR_QUATERNION 0x20
+
+#define DEG2RAD(deg) deg * M_PI / 180.0
+#define PRINT_N(buf, n) HAL_UART_Transmit(&huart2, (uint8_t*) buf, n, HAL_MAX_DELAY)
+#define PRINT(str) HAL_UART_Transmit(&huart2, (uint8_t*) str, strlen(str), HAL_MAX_DELAY)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -76,9 +78,7 @@ UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart3_rx;
 
 /* USER CODE BEGIN PV */
-
-// double target_latitude = 47.653825, target_longitude = -122.307695;
-double target_latitude = 47.65255, target_longitude = -122.3069119;
+double target_latitude = 47.6541352, target_longitude = -122.3003120;
 double time = 0, latitude = 0, longitude = 0;
 float GPS_heading, IMU_heading = 0;
 uint8_t GPS_heading_ready = 0, GPS_location_ready = 0;
@@ -89,13 +89,13 @@ float steer_Pk = 2.0;
 double target_heading = 0;
 double target_distance = 0;
 
-uint8_t UART2_Tx_buf[100];
-
-uint8_t UART3_Rx_buf[100];
+char UART2_Tx_buf[100];
+char UART3_Rx_buf[100];
+char UART5_Rx_buf[100];
 int UART3_Rx_count = 0;
-
-uint8_t UART5_Rx_buf[100];
 int UART5_Rx_count = 0;
+
+uint8_t enable = 0, run = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -116,20 +116,38 @@ void MX_USB_HOST_Process(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	if (huart == &huart3) {
+		uint8_t c = UART3_Rx_buf[UART3_Rx_count++];
 
+		if(c == '\n' || UART3_Rx_count >= 100) {
+			parse_GPS(UART3_Rx_buf, UART3_Rx_count);
+			UART3_Rx_count = 0;
+		}
 
-double deg2rad(double deg) {
-    return deg * M_PI / 180.0;
+		HAL_UART_Receive_IT(&huart3, (uint8_t*) UART3_Rx_buf + UART3_Rx_count, 1);
+
+	} else if (huart == &huart5) {
+		char c = UART5_Rx_buf[UART5_Rx_count++];
+		// PRINT("Bruh\r\n");
+
+		if(c == '\n' || UART5_Rx_count >= 100) {
+			parse_lora(UART5_Rx_buf, UART5_Rx_count);
+			UART5_Rx_count = 0;
+		}
+
+		HAL_UART_Receive_IT(&huart5, (uint8_t*) UART5_Rx_buf + UART5_Rx_count, 1);
+	}
 }
 
 void update_target() {
     double lat, lon, tar_lat, tar_lon;
 
     // Convert latitude and longitude from degrees to radians
-    lat = deg2rad(latitude);
-    lon = deg2rad(longitude);
-    tar_lat = deg2rad(target_latitude);
-    tar_lon = deg2rad(target_longitude);
+    lat = DEG2RAD(latitude);
+    lon = DEG2RAD(longitude);
+    tar_lat = DEG2RAD(target_latitude);
+    tar_lon = DEG2RAD(target_longitude);
     double dlon = tar_lon - lon;
     double dlat = tar_lat - lat;
 
@@ -146,44 +164,51 @@ void update_target() {
     target_distance = 6371000 * c;
 }
 
+void parse_lora(char* buf, int count) {
+	if (count == 0) return;
+	// PRINT_N(buf, count);
 
+	int i = 0;
+	char* items[4];
+	char* ptr = buf;
+	items[i++] = ptr;
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	if (huart == &huart3) {
-		uint8_t c = UART3_Rx_buf[UART3_Rx_count++];
-
-		if(c == '\n' || UART3_Rx_count >= 100) {
-			parse_GPS(UART3_Rx_buf, UART3_Rx_count);
-			UART3_Rx_count = 0;
+	while (ptr < buf+count) {
+		if (*ptr == ' ') {
+			*ptr = '\0';
+			if (i < 4) items[i++] = ptr+1;
+			else break;
 		}
+		ptr++;
+	}
+	if (i < 2) return;
 
-		HAL_UART_Receive_IT(&huart3, UART3_Rx_buf + UART3_Rx_count, 1);
-
-	} else if (huart == &huart5) {
-		uint8_t c = UART5_Rx_buf[UART5_Rx_count++];
-
-		if(c == '\n' || UART5_Rx_count >= 100) {
-			parse_lora(UART5_Rx_buf, UART5_Rx_count);
-			UART5_Rx_count = 0;
+	if (strncmp(items[1], "SET", 3) == 0) {
+		if (i >= 4) {
+			target_latitude = atof(items[2]);
+			target_longitude = atof(items[3]);
+			sprintf(UART2_Tx_buf, "New target received! %f %f\r\n",
+					target_latitude, target_longitude);
+			PRINT(UART2_Tx_buf);
 		}
-
-		HAL_UART_Receive_IT(&huart5, UART5_Rx_buf + UART5_Rx_count, 1);
+	} else if (strncmp(items[1], "STOP", 4) == 0) {
+		enable = 0;
+		PRINT("Stop received!\r\n");
+	} else if (strncmp(items[1], "START", 5) == 0) {
+		enable = 1;
+		PRINT("Start received!\r\n");
 	}
 }
 
-void parse_lora(uint8_t* buf, int count) {
-	HAL_UART_Transmit(&huart2, buf, count, HAL_MAX_DELAY);
-}
-
-void parse_GPS(uint8_t* buf, int count) {
+void parse_GPS(char* buf, int count) {
 	// $GPRMC,011725.00,A,4739.21106,N,12218.32692,W,0.019,,190224,,,D*6A
 	// 0      1         2 3          4 5           6
 
-	if (count <= 6 || strncmp((char*) buf, "$GPRMC", 6)) return;
+	if (strncmp((char*) buf, "$GPRMC", 6)) return;
 
 	int i = 0;
-	uint8_t* items[11];
-	uint8_t* ptr = buf;
+	char* items[11];
+	char* ptr = buf;
 	items[i++] = ptr;
 
 	while (ptr < buf+count) {
@@ -214,13 +239,9 @@ void parse_GPS(uint8_t* buf, int count) {
 		GPS_heading_ready = 1;
 		GPS_heading = atof((char*) items[8]);
 	}
-
-	sprintf((char*) UART2_Tx_buf, "T_Head=%f, C_Head=%f\r\n",
-				target_heading, GPS_heading);
-	printd();
 }
 
-double format_NMEA(uint8_t* buf) {
+double format_NMEA(char* buf) {
 	double val = atof(buf);
 	int deg = val/100;
 	return (val - deg*100)/60 + deg;
@@ -234,29 +255,16 @@ void format_data(double Time, double Lat, double Long) {
 	Hours -= 8;
 	if (Hours < 0) Hours += 24;
 
-	sprintf((char*) UART2_Tx_buf, "Time=%d:%d:%d Latitude=%f, Longitude=%f\r\n",
+	sprintf(UART2_Tx_buf, "Time=%d:%d:%d Latitude=%f, Longitude=%f\r\n",
 			Hours, Min, Sec, Lat, Long);
-	printd();
+	PRINT(UART2_Tx_buf);
 }
 
-float update_IMU_heading() {
+void update_IMU_heading() {
 	uint8_t data[2];
 	HAL_I2C_Mem_Read(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_HEADING, I2C_MEMADD_SIZE_8BIT, data, 2, HAL_MAX_DELAY);
 	IMU_heading = (float)((int16_t)(data[1] << 8 | data[0])) / 16.0;
 }
-
-//float read_rel_heading_quat() {
-//	uint8_t data[8];
-//	HAL_I2C_Mem_Read(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_QUATERNION, I2C_MEMADD_SIZE_8BIT, data, 8, HAL_MAX_DELAY);
-//	float qw = ((int16_t)(data[1] << 8 | data[0])) / 16.0;
-//	float qx = ((int16_t)(data[3] << 8 | data[2])) / 16.0;
-//	float qy = ((int16_t)(data[5] << 8 | data[4])) / 16.0;
-//	float qz = ((int16_t)(data[7] << 8 | data[6])) / 16.0;
-//
-//	double siny_cosp = 2 * (qw * qz + qx * qy);
-//	double cosy_cosp = 1 - 2 * (qy * qy + qz * qz);
-//	return atan2(siny_cosp, cosy_cosp)*180/3.14159265;
-//}
 
 void set_steering(float direction) {
 	int pulse = direction*500+1500;
@@ -270,10 +278,6 @@ void set_speed(float speed) {
 	if (pulse > 1700) pulse = 1700;
 	if (pulse < 1500) pulse = 1500;
 	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, pulse);
-}
-
-void printd() {
-	HAL_UART_Transmit(&huart2, UART2_Tx_buf, strlen((char*) UART2_Tx_buf), HAL_MAX_DELAY);
 }
 /* USER CODE END 0 */
 
@@ -314,15 +318,17 @@ int main(void)
   MX_USART3_UART_Init();
   MX_UART5_Init();
   /* USER CODE BEGIN 2 */
-  int i = 0;
-  char run = 0; // wait for GPS fix
+  PRINT("Hello!\r\n");
+  enable = 0;
+
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  HAL_UART_Receive_IT(&huart3, UART3_Rx_buf, 1);
-  HAL_UART_Receive_IT(&huart5, UART5_Rx_buf, 1);
+  HAL_UART_Receive_IT(&huart3, (uint8_t*) UART3_Rx_buf, 1);
+  HAL_UART_Receive_IT(&huart5, (uint8_t*) UART5_Rx_buf, 1);
+
   uint8_t mode = BNO055_MODE_IMU;
   HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
-  HAL_UART_Transmit(&huart2, (uint8_t*) "Hello!\r\n", 8, HAL_MAX_DELAY);
+
   set_steering(0);
   set_speed(0);
   HAL_Delay(2000);
@@ -337,16 +343,17 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     update_IMU_heading();
-    // sprintf((char*) UART2_Tx_buf, "%f %f %f\r\n", latitude, longitude, rel_heading);
-    // printd();
 
     if (GPS_location_ready) {
     	GPS_location_ready = 0;
     	update_target();
-    	run = (target_distance > 1);
+    	sprintf(UART2_Tx_buf, "Distance: %f Heading: %f\r\n",
+    				target_distance, target_heading);
+    	// PRINT(UART2_Tx_buf);
+    	run = (target_distance > 2);
     }
 
-    if (run) {
+    if (run && enable) {
     	float heading = IMU_heading + IMU_heading_offset;
     	if (heading >= 360) heading -= 360;
 
@@ -365,13 +372,13 @@ int main(void)
     	else if (target_error >= 180) target_error -= 360;
 
     	set_steering(target_error/180.0*steer_Pk);
-    	set_speed(1); // fast
+    	set_speed(.7);
     } else {
+    	set_steering(0);
     	set_speed(0);
     }
 
     HAL_Delay(LOOP_DELAY);
-    i++;
   }
   /* USER CODE END 3 */
 }
