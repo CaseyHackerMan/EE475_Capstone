@@ -79,23 +79,24 @@ DMA_HandleTypeDef hdma_usart3_rx;
 
 /* USER CODE BEGIN PV */
 double target_latitude = 47.6541352, target_longitude = -122.3003120;
-double time = 0, latitude = 0, longitude = 0;
+double time = 0, latitude = 0, longitude = 0; // from GPS
 float GPS_heading, IMU_heading = 0;
-uint8_t GPS_heading_ready = 0, GPS_location_ready = 0;
+uint8_t GPS_heading_ready = 0, GPS_location_ready = 0; // is data new
+float IMU_heading_offset = 0; // difference between IMU and GPS heading
+float steer_Pk = 2.0; // P constant for heading control
 
-float IMU_heading_offset = 0;
-float steer_Pk = 2.0;
+double target_heading = 0; // absolute heading towards the target in degrees
+double target_distance = 0; // distance from the target in meters
 
-double target_heading = 0;
-double target_distance = 0;
-
-char UART2_Tx_buf[100];
-char UART3_Rx_buf[100];
-char UART5_Rx_buf[100];
+// UART stuff
+char UART2_Tx_buf[100]; // Debug
+char UART3_Rx_buf[100]; // GPS
+char UART5_Rx_buf[100]; // LoRA/ESP32
 int UART3_Rx_count = 0;
 int UART5_Rx_count = 0;
 
-uint8_t enable = 0, run = 0;
+uint8_t enable = 0; // motors are enabled
+uint8_t run = 0; // ready to navigate
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -116,8 +117,10 @@ void MX_USB_HOST_Process(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// UART Callback
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	if (huart == &huart3) {
+	if (huart == &huart3) { // received byte from GPS
 		uint8_t c = UART3_Rx_buf[UART3_Rx_count++];
 
 		if(c == '\n' || UART3_Rx_count >= 100) {
@@ -127,9 +130,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 
 		HAL_UART_Receive_IT(&huart3, (uint8_t*) UART3_Rx_buf + UART3_Rx_count, 1);
 
-	} else if (huart == &huart5) {
+	} else if (huart == &huart5) { // received byte from LoRA/ESP32
 		char c = UART5_Rx_buf[UART5_Rx_count++];
-		// PRINT("Bruh\r\n");
 
 		if(c == '\n' || UART5_Rx_count >= 100) {
 			parse_lora(UART5_Rx_buf, UART5_Rx_count);
@@ -140,6 +142,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	}
 }
 
+// Updates target_heading and target_distance based on the current location
+// and target location. (Haversine formula)
 void update_target() {
     double lat, lon, tar_lat, tar_lon;
 
@@ -164,10 +168,12 @@ void update_target() {
     target_distance = 6371000 * c;
 }
 
+// parse line from LoRA/ESP32
 void parse_lora(char* buf, int count) {
 	if (count == 0) return;
 	// PRINT_N(buf, count);
 
+	// split on spaces
 	int i = 0;
 	char* items[4];
 	char* ptr = buf;
@@ -183,6 +189,7 @@ void parse_lora(char* buf, int count) {
 	}
 	if (i < 2) return;
 
+	// process command
 	if (strncmp(items[1], "SET", 3) == 0) {
 		if (i >= 4) {
 			target_latitude = atof(items[2]);
@@ -206,6 +213,7 @@ void parse_GPS(char* buf, int count) {
 
 	if (strncmp((char*) buf, "$GPRMC", 6)) return;
 
+	// split on commas
 	int i = 0;
 	char* items[11];
 	char* ptr = buf;
@@ -220,6 +228,7 @@ void parse_GPS(char* buf, int count) {
 		ptr++;
 	}
 
+	// process data
 	if (*items[2] == 'A') time = atof((char*) items[1]);
 	if (*items[4] == 'N') {
 		GPS_location_ready = 1;
@@ -241,12 +250,14 @@ void parse_GPS(char* buf, int count) {
 	}
 }
 
+// parse NMEA format longitude or latitude (ddmm.mmmmm)
 double format_NMEA(char* buf) {
 	double val = atof(buf);
 	int deg = val/100;
 	return (val - deg*100)/60 + deg;
 }
 
+// old method for parsing GPS data
 void format_data(double Time, double Lat, double Long) {
 	int Hours = Time / 10000;
 	int Min = (int)(Time - (Hours * 10000)) / 100;
@@ -260,12 +271,14 @@ void format_data(double Time, double Lat, double Long) {
 	PRINT(UART2_Tx_buf);
 }
 
+// updates IMU_heading by reading from IMU
 void update_IMU_heading() {
 	uint8_t data[2];
 	HAL_I2C_Mem_Read(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_HEADING, I2C_MEMADD_SIZE_8BIT, data, 2, HAL_MAX_DELAY);
 	IMU_heading = (float)((int16_t)(data[1] << 8 | data[0])) / 16.0;
 }
 
+// set steering servo PWM
 void set_steering(float direction) {
 	int pulse = direction*500+1500;
 	if (pulse > 2000) pulse = 2000;
@@ -273,6 +286,7 @@ void set_steering(float direction) {
 	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, pulse);
 }
 
+// set drive motor PWM
 void set_speed(float speed) {
 	int pulse = speed*200+1500;
 	if (pulse > 1700) pulse = 1700;
@@ -319,16 +333,18 @@ int main(void)
   MX_UART5_Init();
   /* USER CODE BEGIN 2 */
   PRINT("Hello!\r\n");
-  enable = 0;
+  enable = 0; // wait for START command
 
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  HAL_UART_Receive_IT(&huart3, (uint8_t*) UART3_Rx_buf, 1);
-  HAL_UART_Receive_IT(&huart5, (uint8_t*) UART5_Rx_buf, 1);
+  HAL_UART_Receive_IT(&huart3, (uint8_t*) UART3_Rx_buf, 1); // begin GPS Rx interrupt loop
+  HAL_UART_Receive_IT(&huart5, (uint8_t*) UART5_Rx_buf, 1); // begin LoRA/ESP32 Rx interrupt loop
 
-  uint8_t mode = BNO055_MODE_IMU;
+  // initialize IMU
+  uint8_t mode = BNO055_MODE_IMU; // IMU mode, calculates orientation
   HAL_I2C_Mem_Write(&hi2c1, BNO055_ADDRESS << 1, BNO055_ADDR_OPRMODE, I2C_MEMADD_SIZE_8BIT, &mode, 1, HAL_MAX_DELAY);
 
+  // initialize car
   set_steering(0);
   set_speed(0);
   HAL_Delay(2000);
@@ -344,36 +360,43 @@ int main(void)
     /* USER CODE BEGIN 3 */
     update_IMU_heading();
 
+    // if new GPS data, update values
     if (GPS_location_ready) {
     	GPS_location_ready = 0;
     	update_target();
     	sprintf(UART2_Tx_buf, "Distance: %f Heading: %f\r\n",
     				target_distance, target_heading);
     	// PRINT(UART2_Tx_buf);
-    	run = (target_distance > 2);
+    	run = (target_distance > 2); // should I keep going?
     }
 
+    // main control loop
     if (run && enable) {
+    	// get heading estimate
     	float heading = IMU_heading + IMU_heading_offset;
     	if (heading >= 360) heading -= 360;
 
+    	// update heading offset
     	if (GPS_heading_ready) {
     		GPS_heading_ready = 0;
     		float error = heading - GPS_heading;
     		if (error < -180) error += 360;
     		else if (error >= 180) error -= 360;
-    		IMU_heading_offset -= error/5;
+    		IMU_heading_offset -= error/5; // move offset towards absolute heading
     		if (IMU_heading_offset < 0) IMU_heading_offset += 360;
     		else if (IMU_heading_offset >= 360) IMU_heading_offset -= 360;
     	}
 
+    	// calculate heading error
     	float target_error = heading - target_heading;
     	if (target_error < -180) target_error += 360;
     	else if (target_error >= 180) target_error -= 360;
 
+    	// P-controller for steering
     	set_steering(target_error/180.0*steer_Pk);
     	set_speed(.7);
     } else {
+    	// stop
     	set_steering(0);
     	set_speed(0);
     }
